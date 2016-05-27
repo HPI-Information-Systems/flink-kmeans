@@ -14,10 +14,11 @@ import org.apache.flink.api.scala._
 import scala.collection.JavaConverters._
 
 /**
-  * This is a simple Spark implementation of the k-means algorithm.
+  * This is a simple Flink implementation of the k-means algorithm.
   *
-  * @param inputUrl URL to a input CSV file
-  * @param k        number of clusters to be created
+  * @param inputUrl      URL to a input CSV file
+  * @param k             number of clusters to be created
+  * @param numIterations number if k-means iterations
   */
 class KMeans(inputUrl: String, k: Int, numIterations: Int) {
 
@@ -42,12 +43,13 @@ class KMeans(inputUrl: String, k: Int, numIterations: Int) {
         .withBroadcastSet(centroidsDataSet, KMeans.centroidBc)
 
       // Calculate the new centroids.
-      val _k = k
+      val _k = k // Trick: Avoid serialization of surrounding KMeans object.
       val newCentroids = nearestCentroidDataSet
         .groupBy("centroidId")
         .sum("count").andSum("x").andSum("y")
         .map(_.average).withForwardedFields("centroidId")
         .reduceGroup { (iterator: Iterator[TaggedPoint], out: Collector[TaggedPoint]) =>
+          // Make sure that we are not "losing" any centroids.
           val centroids = iterator.toArray
           centroids.foreach(out.collect)
           KMeans.createRandomCentroids(_k - centroids.length).foreach(out.collect)
@@ -178,14 +180,6 @@ case class TaggedPoint(x: Double, y: Double, centroidId: Int) extends PointLike
 case class TaggedPointCounter(x: Double, y: Double, centroidId: Int, count: Int) extends PointLike {
 
   def this(point: PointLike, centroidId: Int, count: Int) = this(point.x, point.y, centroidId, count)
-
-  /**
-    * Adds coordinates and counts of two instances.
-    *
-    * @param that the other instance
-    * @return the sum
-    */
-  def +(that: TaggedPointCounter) = TaggedPointCounter(this.x + that.x, this.y + that.y, this.centroidId, this.count + that.count)
 
   /**
     * Calculates the average of all added instances.
